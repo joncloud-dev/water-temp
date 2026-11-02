@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>VassTemp - Live Water Temperature</title>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+        integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+  :root {
+    --abyss:#071A22; --panel:#0C242E; --line:rgba(120,190,205,0.12);
+    --water:#3FD6C4; --waterDeep:#1E9E92; --aqua:#7FE9DC;
+    --amber:#F2B45A; --red:#F27457; --ok:#5FD69B;
+    --text:#DCE9EC; --muted:#6E8A92; --faint:#47636B;
+    --mono:'IBM Plex Mono',monospace; --sans:'Space Grotesk',system-ui,sans-serif;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  ::-webkit-scrollbar { display:none; }
+  body { background:var(--abyss); color:var(--text); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; }
+  .shell { max-width:440px; margin:0 auto; padding-bottom:40px; }
+
+  /* header */
+  header { position:sticky; top:0; z-index:10; background:rgba(7,26,34,0.95);
+    backdrop-filter:blur(8px); padding:14px 18px 12px; border-bottom:1px solid var(--line); }
+  .bar { display:flex; align-items:center; justify-content:space-between; }
+  .brand { display:flex; align-items:center; gap:8px; }
+  .brand b { font-size:13px; letter-spacing:.14em; text-transform:uppercase;
+    color:var(--muted); font-weight:600; }
+  .refresh { background:none; border:1px solid var(--line); border-radius:10px;
+    color:var(--muted); padding:7px 9px; cursor:pointer; display:flex; }
+  .refresh:active { transform:scale(.94); }
+  .pills { display:flex; gap:8px; margin-top:12px; overflow-x:auto; }
+  .pill { flex-shrink:0; border:1px solid var(--line); background:transparent;
+    color:var(--muted); border-radius:999px; padding:6px 14px; font-size:13px;
+    font-weight:600; cursor:pointer; font-family:var(--sans); }
+  .pill.active { border-color:var(--water); background:rgba(63,214,196,.10); color:var(--water); }
+
+  main { padding:18px 18px 0; }
+  .meta-row { display:flex; align-items:center; justify-content:space-between;
+    margin-bottom:16px; font-size:12.5px; color:var(--muted); }
+  .meta-row .loc { display:flex; align-items:center; gap:5px; }
+  .live { display:flex; align-items:center; gap:6px; }
+  .dot { width:7px; height:7px; border-radius:999px; background:var(--ok);
+    box-shadow:0 0 0 3px rgba(95,214,155,.18); animation:pulse 2.2s ease-in-out infinite; }
+  .dot.stale { background:var(--amber); box-shadow:none; animation:none; }
+
+  /* hero water column */
+  .hero { position:relative; height:300px; border-radius:20px; overflow:hidden;
+    border:1px solid var(--line); margin-bottom:18px;
+    background:linear-gradient(180deg,#0A2028 0%,#0A2C36 22%,#062831 100%); }
+  .hero .cap { position:absolute; top:14px; left:16px; font-size:11.5px; letter-spacing:.14em;
+    text-transform:uppercase; color:var(--faint); z-index:3; }
+  .wave-wrap { position:absolute; top:58px; left:0; right:0; height:30px; z-index:2; overflow:hidden; }
+  .wave { width:200%; height:60px; animation:drift 7s linear infinite; }
+  .waterbody { position:absolute; top:82px; left:0; right:0; bottom:0; z-index:1;
+    background:linear-gradient(180deg,rgba(30,158,146,.20) 0%,rgba(6,40,49,.35) 100%); }
+  .reading { position:absolute; inset:0; display:flex; flex-direction:column; align-items:center;
+    justify-content:center; z-index:4; padding-top:40px; }
+  .reading .big { font-family:var(--mono); font-size:66px; font-weight:500; line-height:1;
+    color:var(--water); text-shadow:0 2px 30px rgba(63,214,196,.35); }
+  .reading .big span { font-size:26px; color:var(--aqua); margin-left:2px; }
+  .reading .sub { margin-top:6px; font-size:12.5px; color:var(--muted); }
+  .depth { position:absolute; bottom:20px; left:16px; right:16px; z-index:4;
+    display:flex; align-items:center; gap:8px; }
+  .depth .rule { flex:1; border-top:1px dashed var(--faint); }
+  .depth span { font-family:var(--mono); font-size:12px; color:var(--muted); }
+
+  /* card */
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:16px; margin-bottom:18px; }
+  .chart-head { display:flex; justify-content:space-between; align-items:baseline; padding:16px 18px 8px; }
+  .chart-head b { font-size:13px; font-weight:600; }
+  .stats { display:flex; gap:16px; font-size:11px; }
+  .stats div { text-align:right; }
+  .stats .k { color:var(--faint); text-transform:uppercase; letter-spacing:.1em; font-size:9.5px; }
+  .stats .v { font-family:var(--mono); font-size:14px; color:var(--text); }
+  .stats .v.lo { color:var(--aqua); } .stats .v.hi { color:var(--water); }
+  .chart-wrap { position:relative; padding:0 10px; }
+  .range { display:flex; gap:6px; padding:2px 18px 10px; }
+  .range button { flex:1; background:transparent; border:1px solid var(--line); color:var(--muted);
+    border-radius:9px; padding:7px 0; font-size:12px; font-weight:600; font-family:var(--sans); cursor:pointer; }
+  .range button.active { border-color:var(--water); background:rgba(63,214,196,.10); color:var(--water); }
+  .range button:active { transform:scale(.97); }
+  #chart { width:100%; height:170px; display:block; }
+  .hover-read { position:absolute; top:6px; left:50%; transform:translateX(-50%);
+    font-family:var(--mono); font-size:11.5px; color:var(--muted); pointer-events:none;
+    opacity:0; transition:opacity .15s; white-space:nowrap; }
+
+  /* map */
+  .below { padding:0 18px; }
+  .map-card { overflow:hidden; }
+  .map-head { display:flex; justify-content:space-between; align-items:baseline; padding:16px 18px 10px; }
+  .map-head b { font-size:13px; font-weight:600; }
+  .map-head span { font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+  /* z-index confines Leaflet's panes so they can't paint over the sticky header */
+  #map { height:230px; position:relative; z-index:0; background:#07171E; }
+  .leaflet-container { background:#07171E; font-family:var(--sans); }
+  .leaflet-control-attribution { background:rgba(7,26,34,.72); color:var(--faint); font-size:9px; }
+  .leaflet-control-attribution a { color:var(--muted); }
+  .leaflet-bar a, .leaflet-bar a:hover { background:var(--panel); color:var(--muted);
+    border-bottom-color:var(--line); }
+  .leaflet-bar a:hover { color:var(--text); }
+  .mk { position:absolute; transform:translate(-50%,-50%); display:flex; align-items:center; gap:6px;
+    white-space:nowrap; padding:4px 9px; border-radius:999px; cursor:pointer;
+    background:rgba(12,36,46,.92); border:1px solid var(--line); backdrop-filter:blur(3px); }
+  .mk b { font-family:var(--mono); font-size:12px; font-weight:500; color:var(--aqua); }
+  .mk i { font-style:normal; font-size:11px; color:var(--muted);
+    max-width:90px; overflow:hidden; text-overflow:ellipsis; }
+  .leaflet-tooltip { background:var(--panel); border:1px solid var(--line); color:var(--text);
+    font-size:11px; padding:3px 8px; box-shadow:none; }
+  .leaflet-tooltip-top::before { border-top-color:var(--line); }
+  .mk.stale { opacity:.7; }
+  .mk.stale b { color:var(--amber); }
+  .mk.on { background:var(--water); border-color:var(--water);
+    box-shadow:0 0 0 4px rgba(63,214,196,.18); opacity:1; }
+  .mk.on b, .mk.on i { color:#04222B; }
+  .mk.on i { max-width:130px; }
+
+  .foot { display:flex; align-items:center; justify-content:center; gap:8px; margin-top:22px;
+    color:var(--faint); font-size:12px; }
+  .bars { display:flex; align-items:flex-end; gap:2px; height:12px; }
+  .bars i { width:3px; border-radius:1px; background:var(--faint); opacity:.5; }
+  .bars i.on { background:var(--water); opacity:1; }
+
+  .errbox { background:rgba(242,116,87,.12); border:1px solid var(--red); border-radius:12px;
+    padding:14px; margin-bottom:16px; font-size:13.5px; }
+  .errbox b { color:var(--red); }
+  .errbox span { color:var(--muted); }
+
+  .emptybox { background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:20px; margin-top:8px; font-size:13.5px; color:var(--muted); text-align:center; }
+
+  .spin { animation:spin .9s linear infinite; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes drift { from { transform:translateX(0); } to { transform:translateX(-50%); } }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:.45;} }
+  @media (prefers-reduced-motion:reduce){ .wave,.spin,.dot{animation:none!important;} }
+</style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div class="bar">
+      <div class="brand">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--water)"
+          stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 6c.6.5 1.2 1 2.5 1C7 7 7 5 9.5 5c2.6 0 2.4 2 5 2 1.3 0 1.9-.5 2.5-1"/>
+          <path d="M2 12c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 1.3 0 1.9-.5 2.5-1"/>
+          <path d="M2 18c.6.5 1.2 1 2.5 1 2.5 0 2.5-2 5-2 2.6 0 2.4 2 5 2 1.3 0 1.9-.5 2.5-1"/>
+        </svg>
+        <b>VASSTEMP.NO</b>
+      </div>
+      <button class="refresh" id="refresh" title="Refresh">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+          stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/>
+          <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>
+        </svg>
+      </button>
+    </div>
+    <div class="pills" id="pills"></div>
+  </header>
+
+  <main id="main"></main>
+
+  <!-- Kept outside <main>, whose contents are re-rendered wholesale: Leaflet
+       needs its container to survive across renders. -->
+  <div class="below">
+    <section class="card map-card" id="mapCard" hidden>
+      <div class="map-head"><b>Station map</b><span id="mapCount"></span></div>
+      <div id="map"></div>
+    </section>
+    <div id="foot"></div>
+  </div>
+</div>
+
+<script>
+/* ────────────────────────────────────────────────────────────────
+   DATA LAYER
+   Talks to the platform's public station API (same origin), which
+   exposes only water-temperature stations and their water-temp
+   series. No auth, no SDK — plain REST.
+
+     GET /api/stations
+       -> { stations: [ { id, name, lat, lng, depth } ] }
+     GET /api/stations/{id}/readings?hours=24
+       -> { station: {...}, readings: [ { t, water_temp,
+            air_temp?, humidity?, pressure?, rsrp? } ] }
+   ──────────────────────────────────────────────────────────────── */
+async function fetchStations() {
+  const res = await fetch("/api/stations");
+  if (!res.ok) throw new Error("stations " + res.status);
+  const json = await res.json();
+  return json.stations || [];
+}
+
+async function fetchReadings(id, hours) {
+  const res = await fetch(`/api/stations/${encodeURIComponent(id)}/readings?hours=${hours}`);
+  if (!res.ok) throw new Error("readings " + res.status);
+  const json = await res.json();
+  const st = json.station || {};
+  return (json.readings || [])
+    .map(r => ({
+      t: r.t,
+      waterTemp: r.water_temp,
+      airTemp: r.air_temp ?? null,
+      humidity: r.humidity ?? null,
+      pressure: r.pressure ?? null,
+      lat: st.lat ?? null,
+      lng: st.lng ?? null,
+      rsrp: r.rsrp ?? null,
+    }))
+    .filter(d => typeof d.waterTemp === "number")
+    .sort((a, b) => a.t - b.t);
+}
+
+/* ── State ──────────────────────────────────────────────────────── */
+const LAST_STATION_KEY = "vasstemp:lastStationId";
+const loadLastStationId = () => {
+  try { return localStorage.getItem(LAST_STATION_KEY); } catch { return null; }
+};
+const saveLastStationId = id => {
+  try { localStorage.setItem(LAST_STATION_KEY, id); } catch {}
+};
+let state = { stations: [], stationId: null, range: 24, series: [], current: null, loading: true, err: null };
+const RANGES = [ { k: "24h", h: 24 }, { k: "7d", h: 168 }, { k: "30d", h: 720 } ];
+const TITLES = { 24: "Last 24 hours", 168: "Last 7 days", 720: "Last 30 days" };
+const round1 = n => Math.round(n * 10) / 10;
+const fmtHour = t => new Date(t).toLocaleTimeString([], { hour:"2-digit", minute:"2-digit" });
+const fmtTick = t => {
+  const d = new Date(t);
+  if (state.range <= 24)  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (state.range <= 168) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { day: "numeric", month: "short" });
+};
+const station = () => state.stations.find(s => s.id === state.stationId) || null;
+const esc = s => String(s).replace(/[&<>"']/g,
+  c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+
+// Re-fetch the station list when `stations` is set: it carries each station's
+// latest temperature, which the map labels its markers with.
+async function load({ stations = false } = {}) {
+  state.loading = true; state.err = null; render();
+  try {
+    if (stations || !state.stations.length) {
+      state.stations = await fetchStations();
+      if (!state.stations.some(s => s.id === state.stationId)) {
+        const saved = loadLastStationId();
+        const match = saved && state.stations.find(s => s.id === saved);
+        state.stationId = match ? saved : (state.stations[0] || {}).id || null;
+      }
+      renderPills();
+    }
+    if (!state.stationId) {
+      state.series = []; state.current = null;
+    } else {
+      state.series = await fetchReadings(state.stationId, state.range);
+      state.current = state.series[state.series.length - 1] || null;
+    }
+  } catch (e) { state.err = e.message; }
+  finally { state.loading = false; render(); }
+}
+
+/* ── Rendering ──────────────────────────────────────────────────── */
+function renderPills() {
+  const el = document.getElementById("pills");
+  el.innerHTML = "";
+  state.stations.forEach(s => {
+    const b = document.createElement("button");
+    b.className = "pill" + (s.id === state.stationId ? " active" : "");
+    b.textContent = s.name;
+    b.onclick = () => selectStation(s.id);
+    el.appendChild(b);
+  });
+}
+
+function selectStation(id) {
+  if (id === state.stationId) return;
+  state.stationId = id;
+  saveLastStationId(id);
+  renderPills();
+  load();
+}
+
+function render() {
+  const main = document.getElementById("main");
+  const cur = state.current || state.series[state.series.length - 1];
+  const st = station();
+  document.getElementById("refresh").querySelector("svg").classList.toggle("spin", state.loading);
+
+  let html = "";
+  if (state.err) {
+    html += `<div class="errbox"><b>Couldn't reach the station.</b>
+      <span>${state.err} — tap refresh, or check back shortly.</span></div>`;
+  }
+
+  // No stations configured yet.
+  if (!state.loading && !state.err && !state.stations.length) {
+    main.innerHTML = `<div class="emptybox">No water-temperature stations are online yet.</div>`;
+    document.getElementById("foot").innerHTML = "";
+    renderMap();
+    return;
+  }
+
+  if (cur) {
+    const mins = Math.round((Date.now() - cur.t) / 60e3);
+    const stale = mins > 90;
+    const hasCoords = typeof cur.lat === "number" && typeof cur.lng === "number";
+    html += `<div class="meta-row">
+      <span class="loc">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/></svg>
+        ${hasCoords ? `${cur.lat.toFixed(4)}°N, ${cur.lng.toFixed(4)}°E` : "location unknown"}
+      </span>
+      <span class="live"><span class="dot ${stale ? "stale" : ""}"></span>
+        ${mins < 1 ? "just now" : mins + " min ago"}</span>
+    </div>`;
+  }
+
+  // hero
+  const temp = cur ? cur.waterTemp.toFixed(1) : "––.–";
+  const depth = st && typeof st.depth === "number"
+    ? `sensor ▸ −${st.depth.toFixed(1)} m` : "";
+  html += `<div class="hero">
+    <div class="cap">Water temperature</div>
+    <div class="wave-wrap">
+      <svg class="wave" viewBox="0 0 1200 60" preserveAspectRatio="none">
+        <path d="M0,30 C150,55 300,5 450,30 C600,55 750,5 900,30 C1050,55 1200,5 1350,30 L1350,60 L0,60 Z" fill="rgba(63,214,196,0.16)"/>
+        <path d="M0,32 C150,10 300,52 450,32 C600,12 750,52 900,32 C1050,12 1200,52 1350,32 L1350,60 L0,60 Z" fill="rgba(30,158,146,0.22)"/>
+      </svg>
+    </div>
+    <div class="waterbody"></div>
+    <div class="reading">
+      <div class="big">${temp}<span>°C</span></div>
+      <div class="sub">${cur ? "Water temperature" : "awaiting first reading"}</div>
+    </div>
+    <div class="depth"><div class="rule"></div><span>${depth}</span></div>
+  </div>`;
+
+  // water temp stats over the window
+  const wt = state.series.map(p => p.waterTemp);
+  const lo = wt.length ? Math.min(...wt) : null, hiV = wt.length ? Math.max(...wt) : null;
+  const avg = wt.length ? wt.reduce((a, b) => a + b, 0) / wt.length : null;
+  const statCell = (k, v, cls) => `<div><div class="k">${k}</div><div class="v ${cls || ""}">${v == null ? "–" : v.toFixed(1) + "°"}</div></div>`;
+
+  // chart
+  html += `<div class="card">
+    <div class="chart-head">
+      <b>${TITLES[state.range]}</b>
+      <div class="stats">
+        ${statCell("Low", lo, "lo")}${statCell("Avg", avg)}${statCell("High", hiV, "hi")}
+      </div>
+    </div>
+    <div class="range" id="range">
+      ${RANGES.map(r => `<button data-h="${r.h}" class="${r.h === state.range ? "active" : ""}">${r.k}</button>`).join("")}
+    </div>
+    <div class="chart-wrap">
+      <div class="hover-read" id="hoverRead"></div>
+      <svg id="chart" viewBox="0 0 400 170" preserveAspectRatio="none"></svg>
+    </div>
+  </div>`;
+
+  main.innerHTML = html;
+  const rangeEl = document.getElementById("range");
+  if (rangeEl) rangeEl.querySelectorAll("button").forEach(b => {
+    b.onclick = () => { state.range = +b.dataset.h; load(); };
+  });
+  drawChart();
+  renderMap();
+
+  // footer signal (only when the station reports rsrp)
+  let foot = "";
+  if (cur && typeof cur.rsrp === "number") {
+    const lvl = cur.rsrp > -85 ? 4 : cur.rsrp > -95 ? 3 : cur.rsrp > -105 ? 2 : 1;
+    let bars = "";
+    for (let b = 1; b <= 4; b++) bars += `<i class="${b <= lvl ? "on" : ""}" style="height:${3 + b * 2.2}px"></i>`;
+    foot = `<div class="foot"><span class="bars">${bars}</span>
+      <span>${cur.rsrp.toFixed(0)} dBm · LTE-M</span></div>`;
+  }
+  document.getElementById("foot").innerHTML = foot;
+}
+
+/* ── Station map (Leaflet + CARTO dark, matching the internal dashboard) ──
+   Every located station is a marker labelled with its current temperature;
+   tapping one selects it, mirroring the pills in the header. ──────────── */
+let map = null, markerLayer = null, mapFramed = false;
+const STALE_MS = 3 * 3600e3;
+
+const located = () => state.stations.filter(s => typeof s.lat === "number" && typeof s.lng === "number");
+
+function renderMap() {
+  const card = document.getElementById("mapCard");
+  const pts = located();
+  // Leaflet missing (its CDN is unreachable) or nothing to plot: no map at all.
+  if (typeof L === "undefined" || !pts.length) { card.hidden = true; return; }
+  const wasHidden = card.hidden;
+  card.hidden = false;
+  document.getElementById("mapCount").textContent =
+    pts.length === 1 ? "1 station" : `${pts.length} stations`;
+
+  if (!map) {
+    map = L.map("map", { scrollWheelZoom: false }).setView([pts[0].lat, pts[0].lng], 11);
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: "&copy; OpenStreetMap &copy; CARTO", subdomains: "abcd", maxZoom: 19,
+    }).addTo(map);
+    markerLayer = L.layerGroup().addTo(map);
+  } else if (wasHidden) {
+    map.invalidateSize(); // sized while hidden, so Leaflet's cached dimensions are stale
+  }
+
+  const cur = state.current;
+  markerLayer.clearLayers();
+  pts.forEach(s => {
+    const active = s.id === state.stationId;
+    // The selected station has a live series loaded; prefer it over the
+    // snapshot the station list was built from.
+    const temp = active && cur ? cur.waterTemp : s.water_temp;
+    const at = active && cur ? cur.t : s.last_t;
+    const cls = "mk" + (active ? " on" : "")
+      + (typeof at === "number" && Date.now() - at > STALE_MS ? " stale" : "");
+    // Only the selected marker spells out its name; nearby stations would
+    // otherwise overlap into an unreadable pile.
+    const icon = L.divIcon({
+      className: "",
+      iconSize: [0, 0],
+      html: `<div class="${cls}"><b>${typeof temp === "number" ? temp.toFixed(1) + "°" : "–"}</b>`
+        + (active ? `<i>${esc(s.name)}</i>` : "") + `</div>`,
+    });
+    const marker = L.marker([s.lat, s.lng], { icon, zIndexOffset: active ? 1000 : 0, keyboard: false })
+      .on("click", () => selectStation(s.id))
+      .addTo(markerLayer);
+    if (!active) marker.bindTooltip(s.name, { direction: "top", offset: [0, -14] });
+  });
+
+  if (!mapFramed) {
+    mapFramed = true;
+    if (pts.length > 1) map.fitBounds(L.latLngBounds(pts.map(s => [s.lat, s.lng])),
+      { padding: [46, 46], maxZoom: 13 });
+    else map.setView([pts[0].lat, pts[0].lng], 12);
+  } else {
+    // Respect wherever the user panned to, but follow a selection that would
+    // otherwise sit off-screen.
+    const sel = pts.find(s => s.id === state.stationId);
+    if (sel && !map.getBounds().pad(-0.15).contains([sel.lat, sel.lng])) map.panTo([sel.lat, sel.lng]);
+  }
+}
+
+/* ── SVG line chart (hand-drawn, with hover inspector) ──────────── */
+function drawChart() {
+  const svg = document.getElementById("chart");
+  if (!svg || !state.series.length) return;
+  const W = 400, H = 170, padL = 34, padR = 8, padT = 10, padB = 20;
+  const d = state.series;
+  const xs = d.map(p => p.t);
+  const all = d.map(p => p.waterTemp);
+  let lo = Math.min(...all), hi = Math.max(...all);
+  const pad = (hi - lo) * 0.15 || 1; lo -= pad; hi += pad;
+  const X = t => padL + (t - xs[0]) / (xs[xs.length - 1] - xs[0]) * (W - padL - padR);
+  const Y = v => padT + (1 - (v - lo) / (hi - lo)) * (H - padT - padB);
+
+  const path = key => d.map((p, i) => (i ? "L" : "M") + X(p.t).toFixed(1) + "," + Y(p[key]).toFixed(1)).join(" ");
+  const waterLine = path("waterTemp");
+  const area = waterLine + ` L${X(xs[xs.length-1]).toFixed(1)},${H-padB} L${padL},${H-padB} Z`;
+
+  // y gridlines
+  let grid = "", labels = "";
+  for (let i = 0; i <= 3; i++) {
+    const v = lo + (hi - lo) * i / 3, y = Y(v);
+    grid += `<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--line)"/>`;
+    labels += `<text x="${padL-6}" y="${y+3}" text-anchor="end" fill="var(--faint)"
+      font-size="9" font-family="var(--sans)">${v.toFixed(0)}</text>`;
+  }
+  // x labels (~5, formatted by range)
+  const every = Math.max(1, Math.floor(d.length / 5));
+  let xlab = "";
+  d.forEach((p, i) => { if (i % every === 0) xlab += `<text x="${X(p.t)}" y="${H-6}" text-anchor="middle"
+    fill="var(--faint)" font-size="9" font-family="var(--sans)">${fmtTick(p.t)}</text>`; });
+
+  svg.innerHTML = `
+    <defs><linearGradient id="wg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="var(--water)" stop-opacity="0.35"/>
+      <stop offset="100%" stop-color="var(--water)" stop-opacity="0.02"/></linearGradient></defs>
+    ${grid}${labels}${xlab}
+    <path d="${area}" fill="url(#wg)"/>
+    <path d="${waterLine}" fill="none" stroke="var(--water)" stroke-width="2.2"/>
+    <line id="cursor" x1="0" y1="${padT}" x2="0" y2="${H-padB}" stroke="var(--aqua)"
+      stroke-width="1" opacity="0"/>
+    <rect id="hit" x="${padL}" y="0" width="${W-padL-padR}" height="${H}" fill="transparent"/>`;
+
+  // hover inspector
+  const hit = svg.querySelector("#hit");
+  const cursor = svg.querySelector("#cursor");
+  const read = document.getElementById("hoverRead");
+  const move = e => {
+    const r = svg.getBoundingClientRect();
+    const px = ((e.touches ? e.touches[0].clientX : e.clientX) - r.left) / r.width * W;
+    let best = 0, bd = 1e9;
+    d.forEach((p, i) => { const dx = Math.abs(X(p.t) - px); if (dx < bd) { bd = dx; best = i; } });
+    const p = d[best];
+    cursor.setAttribute("x1", X(p.t)); cursor.setAttribute("x2", X(p.t)); cursor.setAttribute("opacity", "0.6");
+    read.style.opacity = "1";
+    const label = state.range <= 24
+      ? fmtHour(p.t)
+      : new Date(p.t).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+    read.innerHTML = `${label} · <span style="color:var(--water)">${round1(p.waterTemp)}°C</span>`;
+  };
+  const leave = () => { cursor.setAttribute("opacity", "0"); read.style.opacity = "0"; };
+  hit.addEventListener("mousemove", move);
+  hit.addEventListener("mouseleave", leave);
+  hit.addEventListener("touchmove", e => { e.preventDefault(); move(e); }, { passive: false });
+  hit.addEventListener("touchend", leave);
+}
+
+document.getElementById("refresh").onclick = () => load({ stations: true });
+load();
+setInterval(() => { if (!state.loading) render(); }, 30e3); // refresh "x min ago"
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+{
+  "name": "water-temp",
+  "platform": "nordic-nrf91",
+  "keys": {},
+  "metrics": [
+    { "key": "11", "name": "air_temp",   "label": "Air temperature",   "unit": "\u00b0C" },
+    { "key": "12", "name": "humidity",    "label": "Humidity",          "unit": "%" },
+    { "key": "13", "name": "pressure",    "label": "Pressure",          "unit": "hPa" },
+    { "key": "15", "name": "water_temp",  "label": "Water temperature", "unit": "\u00b0C" }
+  ],
+  "public_view": {
+    "slug": "stations",
+    "tag": "station_type",
+    "value": "water_temp"
+  }
+}

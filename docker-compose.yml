@@ -1,0 +1,28 @@
+# Water-temperature monitor: the released oscore-server image, unchanged, with
+# this repo's extension folders mounted in. No server source, no rebuild.
+#
+#   cp .env.example .env    # set PB_OSCORE_KEK (and the version to pin)
+#   docker compose up -d
+services:
+  oscore-server:
+    image: ghcr.io/joncloud-dev/oscore-server:${OSCORE_SERVER_VERSION:?set OSCORE_SERVER_VERSION in .env}
+    restart: unless-stopped
+    environment:
+      # Generate once with `openssl rand -hex 32` and never rotate: every stored
+      # OSCORE master secret is wrapped with it.
+      PB_OSCORE_KEK: "${PB_OSCORE_KEK:?set PB_OSCORE_KEK in .env (openssl rand -hex 32)}"
+      PB_RETENTION_DAYS: "${PB_RETENTION_DAYS:-90}"
+    ports:
+      - "${HTTP_PORT:-8090}:8090/tcp"   # admin UI (/_/), REST, and the public page (/)
+      - "${COAP_PORT:-5683}:5683/udp"   # OSCORE CoAP for the stations
+    volumes:
+      # SQLite + OSCORE replay/sequence state. Must be durable and backed up:
+      # losing it breaks replay protection for every provisioned station.
+      - pb_data:/pb_data
+      # The product. Read-only: the server only reads these.
+      - ./pb_hooks:/pb_hooks:ro
+      - ./pb_migrations:/pb_migrations:ro
+      - ./pb_public:/pb_public:ro
+
+volumes:
+  pb_data:
